@@ -1,166 +1,38 @@
-"""
-MultiScan_Engulfing_HH_HL_LH_LL - version Python / GitHub Actions
-------------------------------------------------------------------
-Reproduit la logique de l'indicateur MT4 du meme nom, sans MT4 :
-  - Recupere du H1 sur Yahoo Finance et le resample en H4 (UTC)
-  - Detecte les swings (fractales HH/HL/LH/LL)
-  - Detecte les bougies engulfing sur la derniere bougie H4 cloturee
-  - Verifie si l'engulfing tombe dans une zone de structure (tolerance ATR)
-  - Envoie une alerte Telegram si un signal valide apparait
-  - Deduplique les alertes via un fichier d'etat (state.json)
-"""
+name: Scan Engulfing H4
 
-import os
-import json
-from datetime import datetime, timezone
+on:
+  schedule:
+    - cron: "10 0,4,8,12,16,20 * * *"
+  workflow_dispatch: {}
 
-import numpy as np
-import pandas as pd
-import requests
-import yfinance as yf
+permissions:
+  contents: write
 
-PAIRS = [
-    "EURUSD", "GBPUSD", "USDJPY", "USDCHF", "USDCAD",
-    "AUDUSD", "NZDUSD", "EURGBP", "EURJPY", "EURCHF",
-    "GBPJPY", "AUDJPY", "CHFJPY", "EURAUD", "EURCAD",
-]
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
-FRACTAL_WING = 2
-SWING_LOOKBACK_BARS = 200
-ATR_PERIOD = 14
-ZONE_ATR_MULTIPLIER = 0.5
-H1_HISTORY_PERIOD = "60d"
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
 
-TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
-TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
+      - name: Installer les dependances
+        run: pip install -r requirements.txt
 
-STATE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "state.json")
+      - name: Lancer le scanner
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python scanner.py
 
-
-def to_yahoo_symbol(pair: str) -> str:
-    return f"{pair}=X"
-
-
-def fetch_h4(pair: str) -> pd.DataFrame:
-    ticker = to_yahoo_symbol(pair)
-    df = yf.download(
-        ticker,
-        period=H1_HISTORY_PERIOD,
-        interval="60m",
-        progress=False,
-        auto_adjust=False,
-    )
-    if df.empty:
-        return df
-
-    if isinstance(df.columns, pd.MultiIndex):
-        df.columns = df.columns.get_level_values(0)
-
-    if df.index.tz is None:
-        df.index = df.index.tz_localize("UTC")
-    else:
-        df.index = df.index.tz_convert("UTC")
-
-    df = df.rename(columns=str.lower)[["open", "high", "low", "close"]]
-
-    h4 = (
-        df.resample("4h", origin="epoch")
-        .agg({"open": "first", "high": "max", "low": "min", "close": "last"})
-        .dropna()
-    )
-
-    now = datetime.now(timezone.utc)
-    if len(h4) and (h4.index[-1] + pd.Timedelta(hours=4)) > now:
-        h4 = h4.iloc[:-1]
-
-    return h4.tail(SWING_LOOKBACK_BARS + FRACTAL_WING + ATR_PERIOD + 5)
-
-
-def compute_atr(df: pd.DataFrame, period: int) -> pd.Series:
-    high, low, close = df["high"], df["low"], df["close"]
-    prev_close = close.shift(1)
-    tr = pd.concat(
-        [
-            high - low,
-            (high - prev_close).abs(),
-            (low - prev_close).abs(),
-        ],
-        axis=1,
-    ).max(axis=1)
-    return tr.rolling(period).mean()
-
-
-def find_swings(df: pd.DataFrame, wing: int):
-    highs = df["high"].values
-    lows = df["low"].values
-    n = len(df)
-
-    swing_highs, swing_lows = [], []
-    for i in range(wing, n - wing):
-        left_h, right_h = highs[i - wing:i], highs[i + 1:i + 1 + wing]
-        if highs[i] > left_h.max() and highs[i] > right_h.max():
-            swing_highs.append((i, highs[i], df.index[i]))
-
-        left_l, right_l = lows[i - wing:i], lows[i + 1:i + 1 + wing]
-        if lows[i] < left_l.min() and lows[i] < right_l.min():
-            swing_lows.append((i, lows[i], df.index[i]))
-
-    return swing_highs, swing_lows
-
-
-def classify_structure(df: pd.DataFrame, wing: int):
-    swing_highs, swing_lows = find_swings(df, wing)
-
-    last_high_label, last_low_label = "-", "-"
-    last_swing_high, last_swing_low = None, None
-    last_high_idx, last_low_idx = -1, -1
-
-    if len(swing_highs) >= 2:
-        last_high_label = "HH" if swing_highs[-1][1] > swing_highs[-2][1] else "LH"
-    if len(swing_lows) >= 2:
-        last_low_label = "HL" if swing_lows[-1][1] > swing_lows[-2][1] else "LL"
-
-    if swing_highs:
-        last_swing_high = swing_highs[-1][1]
-        last_high_idx = swing_highs[-1][0]
-    if swing_lows:
-        last_swing_low = swing_lows[-1][1]
-        last_low_idx = swing_lows[-1][0]
-
-    if not swing_highs and not swing_lows:
-        structure = "-"
-    elif last_high_idx >= last_low_idx:
-        structure = last_high_label
-    else:
-        structure = last_low_label
-
-    return structure, last_swing_high, last_swing_low, last_high_label, last_low_label
-
-
-def detect_engulfing(df: pd.DataFrame) -> int:
-    if len(df) < 2:
-        return 0
-
-    o1, c1 = df["open"].iloc[-2], df["close"].iloc[-2]
-    o0, c0 = df["open"].iloc[-1], df["close"].iloc[-1]
-
-    prev_bear, prev_bull = c1 < o1, c1 > o1
-    curr_bull, curr_bear = c0 > o0, c0 < o0
-
-    if prev_bear and curr_bull and o0 <= c1 and c0 >= o1:
-        return 1
-    if prev_bull and curr_bear and o0 >= c1 and c0 <= o1:
-        return -1
-    return 0
-
-
-def load_state() -> dict:
-    if os.path.exists(STATE_FILE):
-        with open(STATE_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    return {}
-
-
-def save_state(state: dict) -> None:
-    with open(STATE_FILE, "w", encoding="utf-8") as f:
-        json.dump(state, f, indent=2, sort_keys=True,
+      - name: Sauvegarder l'etat (state.json)
+        run: |
+          git config user.name "engulfing-scanner-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add state.json
+          git diff --cached --quiet || git commit -m "Mise a jour de l'etat des alertes [skip ci]"
+          git push
