@@ -9,7 +9,8 @@ Reproduit la logique de l'indicateur MT4 du meme nom, sans MT4 :
   - Reconstruit la sequence V1 -> N1 -> V2 (depasse V1) -> N2 (plus
     profonde que N1) -> V3 (depasse V2) = SIGNAL, separement en
     haussier et en baissier
-  - Envoie une alerte Telegram si un signal (stage 5) vient d'apparaitre
+  - Envoie une alerte Telegram intermediaire des que V2 casse la neckline
+    de V1 (entree en stage 3), et une alerte finale au signal complet (stage 5)
   - Deduplique les alertes via un fichier d'etat (state.json), une entree
     par paire+sens+jour pour ne pas re-notifier a chaque execution
 """
@@ -204,12 +205,28 @@ def scan_pair(pair: str, state: dict) -> None:
         ps = analyze_pattern(day_df, bullish, FRACTAL_DEPTH)
         sens = "haussier" if bullish else "baissier"
         print(f"{pair} [{sens}]: stage={ps['stage']} - {ps['text']}")
+        price = day_df["close"].iloc[-1]
 
+        # --- Alerte intermediaire : V2 vient de casser la neckline de V1 (entree en stage 3) ---
+        if ps["stage"] >= 3:
+            key_s3 = f"{pair}_{sens}_{day_key}_neckline_v1"
+            if not state.get(key_s3):
+                state[key_s3] = bar_time
+                msg = (
+                    f"{pair} M15 : Neckline V1 cassee par V2 ({sens.upper()})\n"
+                    f"V1={ps['v1']:.5f}  N1={ps['n1']:.5f}\n"
+                    f"V2={ps['v2']:.5f}\n"
+                    f"Prix actuel={price:.5f}\n"
+                    f"Bougie: {bar_time}\n"
+                    f"-> Recherche de N2 en cours (etape 3/5)"
+                )
+                send_telegram(msg)
+
+        # --- Alerte finale : signal complet (V3 depasse V2) ---
         if ps["stage"] == 5:
             key = f"{pair}_{sens}_{day_key}"
             if state.get(key) != bar_time:
                 state[key] = bar_time
-                price = day_df["close"].iloc[-1]
                 msg = (
                     f"{pair} M15 : SIGNAL False Move 3 Vecteurs {sens.upper()}\n"
                     f"V1={ps['v1']:.5f}  N1={ps['n1']:.5f}\n"
