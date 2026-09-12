@@ -1,13 +1,17 @@
 """
-MultiScan_Engulfing_HH_HL_LH_LL - version Python / GitHub Actions
+FalseMove_3Vecteurs - version Python / GitHub Actions
 ------------------------------------------------------------------
 Reproduit la logique de l'indicateur MT4 du meme nom, sans MT4 :
-  - Recupere du H1 sur Yahoo Finance et le resample en H4 (UTC)
-  - Detecte les swings (fractales HH/HL/LH/LL)
-  - Detecte les bougies engulfing sur la derniere bougie H4 cloturee
-  - Verifie si l'engulfing tombe dans une zone de structure (tolerance ATR)
-  - Envoie une alerte Telegram si un signal valide apparait
-  - Deduplique les alertes via un fichier d'etat (state.json)
+  - Recupere du M15 sur Yahoo Finance (limite yfinance: 60 jours d'historique)
+  - Detecte les fractales (sommets/creux) avec une profondeur configurable
+  - Reset quotidien : la sequence ne remonte jamais avant le jour en cours
+    (identique au script MT4 qui casse la boucle des qu'on change de jour)
+  - Reconstruit la sequence V1 -> N1 -> V2 (depasse V1) -> N2 (plus
+    profonde que N1) -> V3 (depasse V2) = SIGNAL, separement en
+    haussier et en baissier
+  - Envoie une alerte Telegram si un signal (stage 5) vient d'apparaitre
+  - Deduplique les alertes via un fichier d'etat (state.json), une entree
+    par paire+sens+jour pour ne pas re-notifier a chaque execution
 """
 
 import os
@@ -25,11 +29,8 @@ PAIRS = [
     "GBPJPY", "AUDJPY", "CHFJPY", "EURAUD", "EURCAD",
 ]
 
-FRACTAL_WING = 2
-SWING_LOOKBACK_BARS = 200
-ATR_PERIOD = 14
-ZONE_ATR_MULTIPLIER = 0.5
-H1_HISTORY_PERIOD = "60d"
+FRACTAL_DEPTH = 2          # equivalent de FractalDepth dans le .mq4
+M15_HISTORY_PERIOD = "60d" # limite yfinance pour l'intervalle 15m
 
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
@@ -41,12 +42,12 @@ def to_yahoo_symbol(pair: str) -> str:
     return f"{pair}=X"
 
 
-def fetch_h4(pair: str) -> pd.DataFrame:
+def fetch_m15(pair: str) -> pd.DataFrame:
     ticker = to_yahoo_symbol(pair)
     df = yf.download(
         ticker,
-        period=H1_HISTORY_PERIOD,
-        interval="60m",
+        period=M15_HISTORY_PERIOD,
+        interval="15m",
         progress=False,
         auto_adjust=False,
     )
@@ -62,96 +63,99 @@ def fetch_h4(pair: str) -> pd.DataFrame:
         df.index = df.index.tz_convert("UTC")
 
     df = df.rename(columns=str.lower)[["open", "high", "low", "close"]]
-
-    h4 = (
-        df.resample("4h", origin="epoch")
-        .agg({"open": "first", "high": "max", "low": "min", "close": "last"})
-        .dropna()
-    )
-
-    now = datetime.now(timezone.utc)
-    if len(h4) and (h4.index[-1] + pd.Timedelta(hours=4)) > now:
-        h4 = h4.iloc[:-1]
-
-    return h4.tail(SWING_LOOKBACK_BARS + FRACTAL_WING + ATR_PERIOD + 5)
+    return df
 
 
-def compute_atr(df: pd.DataFrame, period: int) -> pd.Series:
-    high, low, close = df["high"], df["low"], df["close"]
-    prev_close = close.shift(1)
-    tr = pd.concat(
-        [
-            high - low,
-            (high - prev_close).abs(),
-            (low - prev_close).abs(),
-        ],
-        axis=1,
-    ).max(axis=1)
-    return tr.rolling(period).mean()
+def today_bars(df: pd.DataFrame) -> pd.DataFrame:
+    """Ne garde que les bougies du jour calendaire (UTC) de la derniere bougie,
+    equivalent au reset quotidien du .mq4 (IsSameDay avec la bougie en formation)."""
+    if df.empty:
+        return df
+    last_day = df.index[-1].date()
+    return df[df.index.date == last_day]
 
 
-def find_swings(df: pd.DataFrame, wing: int):
-    highs = df["high"].values
-    lows = df["low"].values
-    n = len(df)
-
-    swing_highs, swing_lows = [], []
-    for i in range(wing, n - wing):
-        left_h, right_h = highs[i - wing:i], highs[i + 1:i + 1 + wing]
-        if highs[i] > left_h.max() and highs[i] > right_h.max():
-            swing_highs.append((i, highs[i], df.index[i]))
-
-        left_l, right_l = lows[i - wing:i], lows[i + 1:i + 1 + wing]
-        if lows[i] < left_l.min() and lows[i] < right_l.min():
-            swing_lows.append((i, lows[i], df.index[i]))
-
-    return swing_highs, swing_lows
-
-
-def classify_structure(df: pd.DataFrame, wing: int):
-    swing_highs, swing_lows = find_swings(df, wing)
-
-    last_high_label, last_low_label = "-", "-"
-    last_swing_high, last_swing_low = None, None
-    last_high_idx, last_low_idx = -1, -1
-
-    if len(swing_highs) >= 2:
-        last_high_label = "HH" if swing_highs[-1][1] > swing_highs[-2][1] else "LH"
-    if len(swing_lows) >= 2:
-        last_low_label = "HL" if swing_lows[-1][1] > swing_lows[-2][1] else "LL"
-
-    if swing_highs:
-        last_swing_high = swing_highs[-1][1]
-        last_high_idx = swing_highs[-1][0]
-    if swing_lows:
-        last_swing_low = swing_lows[-1][1]
-        last_low_idx = swing_lows[-1][0]
-
-    if not swing_highs and not swing_lows:
-        structure = "-"
-    elif last_high_idx >= last_low_idx:
-        structure = last_high_label
-    else:
-        structure = last_low_label
-
-    return structure, last_swing_high, last_swing_low, last_high_label, last_low_label
+def find_fractals(highs: np.ndarray, lows: np.ndarray, depth: int):
+    """Retourne deux tableaux booleens (fractal haut / fractal bas) sur des
+    bougies en ordre chronologique ascendant (index 0 = plus ancien)."""
+    n = len(highs)
+    is_high = np.zeros(n, dtype=bool)
+    is_low = np.zeros(n, dtype=bool)
+    for i in range(depth, n - depth):
+        h = highs[i]
+        if all(highs[i - k] < h for k in range(1, depth + 1)) and \
+           all(highs[i + k] < h for k in range(1, depth + 1)):
+            is_high[i] = True
+        l = lows[i]
+        if all(lows[i - k] > l for k in range(1, depth + 1)) and \
+           all(lows[i + k] > l for k in range(1, depth + 1)):
+            is_low[i] = True
+    return is_high, is_low
 
 
-def detect_engulfing(df: pd.DataFrame) -> int:
-    if len(df) < 2:
-        return 0
+def analyze_pattern(day_df: pd.DataFrame, bullish: bool, depth: int) -> dict:
+    """Reproduit AnalyzePattern() du .mq4 sur les bougies du jour en cours.
+    Retourne stage (0-5), les niveaux V1/N1/V2/N2 et un libelle."""
+    result = {"stage": 0, "v1": None, "n1": None, "v2": None, "n2": None,
+              "text": "Recherche V1..."}
 
-    o1, c1 = df["open"].iloc[-2], df["close"].iloc[-2]
-    o0, c0 = df["open"].iloc[-1], df["close"].iloc[-1]
+    highs = day_df["high"].values
+    lows = day_df["low"].values
+    n = len(highs)
+    if n < depth * 2 + 1:
+        return result
 
-    prev_bear, prev_bull = c1 < o1, c1 > o1
-    curr_bull, curr_bear = c0 > o0, c0 < o0
+    is_frac_high, is_frac_low = find_fractals(highs, lows, depth)
+    extreme_mask = is_frac_high if bullish else is_frac_low
+    neck_mask = is_frac_low if bullish else is_frac_high
 
-    if prev_bear and curr_bull and o0 <= c1 and c0 >= o1:
-        return 1
-    if prev_bull and curr_bear and o0 >= c1 and c0 <= o1:
-        return -1
-    return 0
+    # bougie en cours = derniere du jour ; on ne considere comme "visibles"
+    # que les fractales confirmees (il faut `depth` bougies apres elles)
+    last_confirmable = n - 1 - depth
+    extreme_ks = [k for k in range(last_confirmable, -1, -1) if extreme_mask[k]]
+    neck_ks = [k for k in range(last_confirmable, -1, -1) if neck_mask[k]]
+
+    if not extreme_ks:
+        return result
+
+    v2_k = extreme_ks[0]
+    v2 = highs[v2_k] if bullish else lows[v2_k]
+
+    v1_k = next((k for k in extreme_ks[1:] if k < v2_k), None)
+    if v1_k is None:
+        result.update(stage=1, v1=v2, text="V1 forme, attente neckline")
+        return result
+    v1 = highs[v1_k] if bullish else lows[v1_k]
+
+    n1_k = next((k for k in neck_ks if v1_k < k < v2_k), None)
+    if n1_k is None:
+        result.update(stage=1, v1=v1, text="V1 forme, attente neckline")
+        return result
+    n1 = lows[n1_k] if bullish else highs[n1_k]
+    result.update(stage=2, v1=v1, n1=n1, text="Neckline V1 cassee, recherche V2")
+
+    beyond = (v2 > v1) if bullish else (v2 < v1)
+    if not beyond:
+        result["text"] = "V2 ne depasse pas V1 (invalide)"
+        return result
+    result.update(stage=3, v2=v2, text="V2 casse la neckline V1 - N2 ?")
+
+    n2_k = next((k for k in neck_ks if k > v2_k), None)
+    if n2_k is None:
+        return result
+    n2 = lows[n2_k] if bullish else highs[n2_k]
+
+    deeper = (n2 < n1) if bullish else (n2 > n1)
+    if not deeper:
+        result["text"] = "N2 pas assez profonde vs N1"
+        return result
+    result.update(stage=4, n2=n2, text="Neckline V2 cassee - attente V3")
+
+    price = day_df["close"].iloc[-1]
+    if (price > v2) if bullish else (price < v2):
+        result.update(stage=5, text="SIGNAL: V3 depasse V2 !")
+
+    return result
 
 
 def load_state() -> dict:
@@ -182,37 +186,38 @@ def send_telegram(message: str) -> None:
 
 
 def scan_pair(pair: str, state: dict) -> None:
-    df = fetch_h4(pair)
-    min_bars = FRACTAL_WING * 2 + ATR_PERIOD + 5
+    df = fetch_m15(pair)
+    min_bars = FRACTAL_DEPTH * 2 + 10
     if len(df) < min_bars:
-        print(f"{pair}: donnees insuffisantes ({len(df)} bougies H4)")
+        print(f"{pair}: donnees insuffisantes ({len(df)} bougies M15)")
         return
 
-    structure, last_high, last_low, high_label, low_label = classify_structure(df, FRACTAL_WING)
-    engulf = detect_engulfing(df)
-
-    df = df.copy()
-    df["atr"] = compute_atr(df, ATR_PERIOD)
-    atr_val = df["atr"].iloc[-1]
-    ref_price = df["close"].iloc[-1]
-    bar_time = df.index[-1].isoformat()
-
-    print(f"{pair}: structure={structure} engulfing={engulf} close={ref_price:.5f}")
-
-    if pd.isna(atr_val):
+    day_df = today_bars(df)
+    if len(day_df) < FRACTAL_DEPTH * 2 + 1:
+        print(f"{pair}: pas assez de bougies aujourd'hui ({len(day_df)})")
         return
 
-    if engulf == 1 and last_low is not None and abs(ref_price - last_low) <= atr_val * ZONE_ATR_MULTIPLIER:
-        key = f"{pair}_bull"
-        if state.get(key) != bar_time:
-            state[key] = bar_time
-            send_telegram(f"{pair} H4 : Engulfing HAUSSIER dans zone {low_label} (bougie {bar_time})")
+    day_key = day_df.index[-1].date().isoformat()
+    bar_time = day_df.index[-1].isoformat()
 
-    elif engulf == -1 and last_high is not None and abs(ref_price - last_high) <= atr_val * ZONE_ATR_MULTIPLIER:
-        key = f"{pair}_bear"
-        if state.get(key) != bar_time:
-            state[key] = bar_time
-            send_telegram(f"{pair} H4 : Engulfing BAISSIER dans zone {high_label} (bougie {bar_time})")
+    for bullish in (True, False):
+        ps = analyze_pattern(day_df, bullish, FRACTAL_DEPTH)
+        sens = "haussier" if bullish else "baissier"
+        print(f"{pair} [{sens}]: stage={ps['stage']} - {ps['text']}")
+
+        if ps["stage"] == 5:
+            key = f"{pair}_{sens}_{day_key}"
+            if state.get(key) != bar_time:
+                state[key] = bar_time
+                price = day_df["close"].iloc[-1]
+                msg = (
+                    f"{pair} M15 : SIGNAL False Move 3 Vecteurs {sens.upper()}\n"
+                    f"V1={ps['v1']:.5f}  N1={ps['n1']:.5f}\n"
+                    f"V2={ps['v2']:.5f}  N2={ps['n2']:.5f}\n"
+                    f"Prix actuel={price:.5f} (depasse V2)\n"
+                    f"Bougie: {bar_time}"
+                )
+                send_telegram(msg)
 
 
 def main() -> None:
