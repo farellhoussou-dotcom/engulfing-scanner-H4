@@ -103,6 +103,7 @@
   "EURAUD_haussier_2026-09-25_neckline_v1": "2026-09-25T21:45:00+00:00",
   "EURAUD_haussier_2026-09-28_neckline_v1": "2026-09-28T16:30:00+00:00",
   "EURAUD_haussier_2026-09-30_neckline_v1": "2026-09-30T14:45:00+00:00",
+  "EURAUD_haussier_2026-10-02_neckline_v1": "2026-10-02T20:30:00+00:00",
   "EURCAD_baissier_2026-09-11_neckline_v1": "2026-09-11T21:45:00+00:00",
   "EURCAD_baissier_2026-09-15_neckline_v1": "2026-09-15T19:30:00+00:00",
   "EURCAD_baissier_2026-09-17_neckline_v1": "2026-09-17T04:30:00+00:00",
@@ -348,5 +349,6 @@
   "USDJPY_haussier_2026-09-28_neckline_v1": "2026-09-28T16:30:00+00:00",
   "USDJPY_haussier_2026-09-29_neckline_v1": "2026-09-29T10:30:00+00:00",
   "USDJPY_haussier_2026-09-30_neckline_v1": "2026-09-30T20:30:00+00:00",
-  "USDJPY_haussier_2026-10-01_neckline_v1": "2026-10-01T05:30:00+00:00"
+  "USDJPY_haussier_2026-10-01_neckline_v1": "2026-10-01T05:30:00+00:00",
+  "USDJPY_haussier_2026-10-02_neckline_v1": "2026-10-02T20:30:00+00:00"
 }
