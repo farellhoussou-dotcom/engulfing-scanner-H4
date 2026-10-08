@@ -86,6 +86,7 @@
   "CHFJPY_haussier_2026-10-01_neckline_v1": "2026-10-01T05:30:00+00:00",
   "CHFJPY_haussier_2026-10-02_neckline_v1": "2026-10-02T05:15:00+00:00",
   "CHFJPY_haussier_2026-10-06_neckline_v1": "2026-10-06T11:00:00+00:00",
+  "CHFJPY_haussier_2026-10-08_neckline_v1": "2026-10-08T05:45:00+00:00",
   "EURAUD_baissier_2026-09-14_neckline_v1": "2026-09-14T20:15:00+00:00",
   "EURAUD_baissier_2026-09-15_neckline_v1": "2026-09-15T13:15:00+00:00",
   "EURAUD_baissier_2026-09-16_neckline_v1": "2026-09-16T19:30:00+00:00",
@@ -226,6 +227,7 @@
   "EURJPY_haussier_2026-10-02_neckline_v1": "2026-10-02T14:30:00+00:00",
   "EURJPY_haussier_2026-10-05_neckline_v1": "2026-10-05T17:00:00+00:00",
   "EURJPY_haussier_2026-10-06_neckline_v1": "2026-10-06T11:00:00+00:00",
+  "EURJPY_haussier_2026-10-08_neckline_v1": "2026-10-08T05:45:00+00:00",
   "EURUSD_baissier_2026-09-11_neckline_v1": "2026-09-11T21:15:00+00:00",
   "EURUSD_baissier_2026-09-14_neckline_v1": "2026-09-14T14:45:00+00:00",
   "EURUSD_baissier_2026-09-15_neckline_v1": "2026-09-15T19:30:00+00:00",
@@ -272,6 +274,7 @@
   "GBPJPY_haussier_2026-10-02": "2026-10-02T14:30:00+00:00",
   "GBPJPY_haussier_2026-10-02_neckline_v1": "2026-10-02T14:30:00+00:00",
   "GBPJPY_haussier_2026-10-06_neckline_v1": "2026-10-06T11:00:00+00:00",
+  "GBPJPY_haussier_2026-10-08_neckline_v1": "2026-10-08T05:45:00+00:00",
   "GBPUSD_baissier_2026-09-14_neckline_v1": "2026-09-14T04:30:00+00:00",
   "GBPUSD_baissier_2026-09-16_neckline_v1": "2026-09-16T13:15:00+00:00",
   "GBPUSD_baissier_2026-09-17_neckline_v1": "2026-09-17T13:15:00+00:00",
@@ -321,6 +324,7 @@
   "NZDUSD_haussier_2026-10-01_neckline_v1": "2026-10-01T20:45:00+00:00",
   "NZDUSD_haussier_2026-10-02_neckline_v1": "2026-10-02T14:30:00+00:00",
   "NZDUSD_haussier_2026-10-06_neckline_v1": "2026-10-06T11:00:00+00:00",
+  "NZDUSD_haussier_2026-10-08_neckline_v1": "2026-10-08T05:45:00+00:00",
   "USDCAD_baissier_2026-09-14_neckline_v1": "2026-09-14T20:15:00+00:00",
   "USDCAD_baissier_2026-09-15_neckline_v1": "2026-09-15T19:30:00+00:00",
   "USDCAD_baissier_2026-09-17_neckline_v1": "2026-09-17T13:15:00+00:00",
@@ -396,5 +400,6 @@
   "USDJPY_haussier_2026-09-30_neckline_v1": "2026-09-30T20:30:00+00:00",
   "USDJPY_haussier_2026-10-01_neckline_v1": "2026-10-01T05:30:00+00:00",
   "USDJPY_haussier_2026-10-02_neckline_v1": "2026-10-02T20:30:00+00:00",
-  "USDJPY_haussier_2026-10-05_neckline_v1": "2026-10-05T05:15:00+00:00"
+  "USDJPY_haussier_2026-10-05_neckline_v1": "2026-10-05T05:15:00+00:00",
+  "USDJPY_haussier_2026-10-08_neckline_v1": "2026-10-08T05:45:00+00:00"
 }
